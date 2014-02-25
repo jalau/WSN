@@ -41,17 +41,14 @@
 
 #undef  NRK_APP_STACKSIZE
 #define NRK_APP_STACKSIZE 512
-#define NODE_ID    0x0003
-
+#define NODE_ID    0x0000
+#define GATE_ID    0x0000
+#define LAST_NODE		2
 void nrk_create_taskset ();
 void nrk_register_drivers();
 
-nrk_task_type SEND_SENSOR_TASK;
-nrk_task_type SEND_NETWORK_TASK;
 nrk_task_type RECEIVE_TASK;
 
-NRK_STK send_sensor_stack[NRK_APP_STACKSIZE];
-NRK_STK send_network_stack[NRK_APP_STACKSIZE];
 NRK_STK receive_stack[NRK_APP_STACKSIZE];
 nrk_sem_t *my_sem;
 
@@ -59,12 +56,11 @@ nrk_sem_t *my_sem;
 union {
   uint8_t  buffer[RF_MAX_PAYLOAD_SIZE];
   packet_t packet; 
-} tx_sensor_buf, tx_network_buf, rx_buf;
+} tx_config_buf, rx_buf;
 
 uint16_t adj_matrix[NUM_NODES][NUM_NODES] = {0};
 uint16_t sensor_packet_number[NUM_NODES] = {0};
 uint16_t network_packet_number[NUM_NODES] = {0};
-uint16_t config_packet_number[NUM_NODES] = {0};
 uint8_t neightbor_list[NUM_NODES] = {0};
 nrk_time_t sensor_period, network_period;
 
@@ -100,15 +96,6 @@ int main ()
 #define MAX_TIMEOUTS 3
 
 
-void send_sensor_task(void)
-{
-  //tx_sensor_buf.packet.sensor_packet.pkt_num = 0;
-}
-
-void send_network_task(void)
-{
-}
-
 /*
 	Will return data into global array neighbor_list.
 	
@@ -118,9 +105,9 @@ void send_network_task(void)
 	A node graph of G <- 3 <- 1 <- 2 will look like:
 	
 	neighbor_list[0] = 3
-	neighbor_list[3] = 1
-	neighbor_list[1] = 2
-	neighbor_list[2] = 0;
+	neighbor_list[1] = 1
+	neighbor_list[2] = 2
+	neighbor_list[3] = 0;
 */
 void find_neighbors(void)
 {
@@ -139,26 +126,26 @@ void find_neighbors(void)
 	//look for next node
 	for(int x = 1; x < NUM_NODES; x++)
 	{
-		if(adj_matrix[x][first] > max_rssi && x != first)
+		if(adj_matrix[x][next_neighbor] > max_rssi && x != next_neighbor)
 		{
-			neighbor_list[next_neighbor] = x;
+			neighbor_list[1] = x;
+			max_rssi = adj_matrix[x][next_neighbor];
 			next_neighbor = x;
-			max_rssi = adj_matrix[x][first];
 		}
 	}
 	max_rssi = 0;
 	//Look for last node
 	for(int x = 1; x < NUM_NODES; x++)
 	{
-		if(adj_matrix[x][second] > max_rssi && x != first && x != second)
+		if(adj_matrix[x][next_neighbor] > max_rssi && x != neighbor_list[0] && x != neighbor_list[1])
 		{
-			neighbor_list[next_neighbor] = x;
+			neighbor_list[2] = x;
+			max_rssi = adj_matrix[x][next_neighbor];
 			next_neighbor = x;
-			max_rssi = adj_matrix[x][third];
 		}
 	}
 	//make the last node's neighbor set to 0
-	neighbor_list[next_neighbor] = 0;
+	neighbor_list[3] = 0;
 	return;
 }
 
@@ -178,6 +165,22 @@ void receive_task(void)
   int8_t rssi = 0;
   nrk_sig_t uart_rx_signal;
   char	option;
+  //packet to hold configuration message to be sent
+  packet_t *config;
+  //time variable to set configuration periods
+  nrk_time_t config_period;
+  config_period.nano_secs = 0;
+  config_period.secs = 5;
+
+  //Initialize config packet to be sent
+  config->packet.pkt_type = packet_type_config;
+  config->packet.sender = GATE_ID;
+  //We make sure to send to the last node in the network
+  //Also known as the farthest node from the gateway.
+  config->packet.receiver = neighbor_list[LAST_NODE];
+  config->packet.config_packet.pkt_num = 1;
+  config->packet.config_packet.period = config_period;
+
   printf("Receive Task PID = %d\r\n", nrk_get_pid());
   bmac_init(17);
   bmac_rx_pkt_set_buffer((uint8_t *)rx_buf.buffer, sizeof(rx_buf));
@@ -188,6 +191,7 @@ void receive_task(void)
   	packet_t *local;
 	uint8_t val=0;
 	uint8_t rval=0;
+	
 	while(bmac_rx_pkt_ready()){
 	  local = (packet_t*) bmac_rx_pkt_get(&len, &rssi);
 	  uint8_t route=0;
@@ -289,295 +293,67 @@ void receive_task(void)
 	  if(nrk_uart_data_ready(NRK_DEFAULT_UART))
 		option=getchar();
 		int input_val;
+		
 	  switch(option){
 		case 's': nrk_kprintf(PSTR("Please input number (in seconds) and press enter.\r\n" ));
+			config->packet.config_packet.cfg_type = config_type_sensor;
 			do{
 			if(nrk_uart_data_ready(NRK_DEFAULT_UART))
+			  option = getchar();
 			  input_val *= 10;
-			  input_val += atoi(getchar());
+			  input_val += atoi(option);
 			else nrk_event_wait(SIG(uart_rx_signal));
 			  } while(option!='\n');
-			sned_config_task(input_val);
-			break;
+			  
+			if(input_val > 0 && input_val < 30){
+			  config_period.secs = input_val;
+  		      config.packet.config_packet.period = config_period;
+			}
+		    break;
 		case 'n': nrk_kprintf(PSTR("Please input number (in seconds) and press enter.\r\n" ));
+			local->packet.config_packet.cfg_type = config_type_network;
 			do{
 			if(nrk_uart_data_ready(NRK_DEFAULT_UART))
 			  input_val *= 10;
 			  input_val += atoi(getchar());
 			else nrk_event_wait(SIG(uart_rx_signal));
 			  } while(option!='\n');
+			  
+			if(input_val > 0 && input_val < 30){
+			  config_period.secs = input_val;
+			  config.packet.config_packet.period = config_period;
+			  }
 			break;
-		case'r':
+		case'r': nrk_kprintf(PSTR("Most recent network structure (lower numbers mean node is farther away from the gateway):\r\n" ));
+			find_neighbors();
+			for(int x = 0; x < NUM_NODES; x++){
+			nrk_kprintf("%d. Node %d \r\n", x, neighbor_list[x]);
+			}
 			break;
 		default: nrk_kprintf(PSTR("Command not reconized!\r\n" ));
 			break;
 	  }
 	  
 	}
-	//When not receiving packets, look for keyboard commands
   }
 }
-
-#if 0
-void whacky_task(void)
-{
-  uint8_t    i, len, fd;
-  int8_t     rssi, val;
-  packet_t  *local_buf;
-  uint16_t   light;
-  uint32_t   master_time, response_time;
-  nrk_time_t start_time, end_time;
-
-  //
-  // Initialize the constant fields for tx_buf
-  // 
-  tx_buf.packet.sender        = MAC_ADDR;
-  tx_buf.packet.receiver      = MASTER_ID;   
-  
-  printf ("whacky_task PID=%d\r\n", nrk_get_pid ());
-  
-  // Open ADC device as read 
-  //fd=nrk_open(FIREFLY_SENSOR_BASIC,READ);
-  if(fd==NRK_ERROR) nrk_kprintf(PSTR("Failed to open sensor driver\r\n"));
-  
-  val = nrk_set_status(fd, SENSOR_SELECT, LIGHT);
-
-  // init bmac on channel 17
-  bmac_init(17);
-  
-  // This sets the next RX buffer.
-  // This can be called at anytime before releasing the packet
-  // if you wish to do a zero-copy buffer switch
-  bmac_rx_pkt_set_buffer((uint8_t*)&rx_buf, sizeof(rx_buf));
-
-  while (1) {
-    DBG_KPRINTF("Waiting for a Packet\r\n");
-
-    // Get the RX packet 
-    nrk_led_set (ORANGE_LED);
-
-    val = bmac_wait_until_rx_pkt ();
-    if (val != NRK_OK) {
-      DBG_KPRINTF("Could not receive packet\r\n");
-      continue;
-    }
-
-    local_buf = (packet_t*)bmac_rx_pkt_get(&len, &rssi);
-    
-    DBG_PRINTF("Got RX packet len=%d RSSI=%d\r\n", len, rssi);
-
-    DBG_PRINTF("sender: %d, recipient: %d, round: %d, type: %d, response: %d\r\n",
-	       local_buf->sender,
-	       local_buf->receiver,
-	       local_buf->round,
-	       local_buf->msg_type,
-	       local_buf->response_time
-	       );
-
-    nrk_led_clr (ORANGE_LED);
-
-    if (len != PACKET_LEN) {
-      DBG_PRINTF("packet of length %d\r\n", len);
-      bmac_rx_pkt_release ();
-      continue;
-    }
-    
-    if (local_buf->receiver != MAC_ADDR) {
-      DBG_PRINTF("intended recipient is %d\r\n", local_buf->receiver);
-      bmac_rx_pkt_release ();
-      continue;
-    }
-    
-    if (local_buf->sender != MASTER_ID) {
-      DBG_PRINTF("sender is %d\r\n", local_buf->sender);
-      bmac_rx_pkt_release ();
-      continue;
-    }
-    
-    //
-    // Old packet
-    //
-    if (local_buf->round <= last_round) {
-      DBG_PRINTF("stale packet: %d\n", local_buf->round);
-      bmac_rx_pkt_release ();
-      continue;
-    }
-
-    master_time = local_buf->response_time;
-    last_round  = local_buf->round;
-    
-    tx_buf.packet.round    = last_round;
-    tx_buf.packet.msg_type = packet_type_ack;
-
-    DBG_PRINTF("sending\nsender: %d, recipient: %d, round: %d, type: %d, response: %d\r\n",
-	       tx_buf.packet.sender,
-	       tx_buf.packet.receiver,
-	       tx_buf.packet.round,
-	       tx_buf.packet.msg_type,
-	       tx_buf.packet.response_time
-	       );
-      val = bmac_tx_pkt((uint8_t*)&tx_buf, PACKET_LEN);
-      if (val != NRK_OK) {
-	DBG_KPRINTF("Could not Transmit!\r\n");
-	continue;
-      }
-      // Task gets control again after TX complete
-      nrk_kprintf (PSTR ("Tx task sent data!\r\n"));
-    nrk_led_set (RED_LED);
-    
-    //Start time when light turns on.
-    nrk_time_get(&start_time);
-    
-    while (1) {
-      //Checking our response time limit.
-      nrk_time_get(&end_time);
-      response_time = ((end_time.secs-start_time.secs)*1000+
-		       (end_time.nano_secs-start_time.nano_secs)/1000000);
-      //if we've reached our limit, then exit the loop.
-      if(response_time >= 10000) break;
-      
-      //Checking light value for hit node.
-      val = nrk_read(fd,  (uint8_t*)&light, sizeof(light));
-
-      if(light >= WHACK_THRESHOLD) {
-	DBG_PRINTF("Light: %u\r\n", light);	
-	break;
-      }
-
-      //Checking to see if the master may not have gotten our ACK
-      while (bmac_rx_pkt_ready()) {
-	//Store the packet and check to see if its for the node
-	local_buf = (packet_t*)bmac_rx_pkt_get(&len, &rssi);
-	
-	if (local_buf->receiver == MAC_ADDR &&
-	    local_buf->sender   == MASTER_ID) {
-	  //At this point, packet is set to be ACK still
-	  val = bmac_tx_pkt((uint8_t*)&tx_buf, PACKET_LEN);
-	  if (val != NRK_OK) {
-	    DBG_KPRINTF("Could not Transmit!\r\n");
-	  }
-	}
-
-	bmac_rx_pkt_release ();
-      }
-    }    
-    
-    nrk_led_clr (RED_LED);
-    
-    tx_buf.packet.msg_type      = packet_type_done;
-    
-    if (light >= WHACK_THRESHOLD) {
-      tx_buf.packet.response_time = 1;
-    } else {
-      tx_buf.packet.response_time = 0;
-    }
-    
-    nrk_time_t wait_time;
-    uint8_t    acked = 0;
-
-    wait_time.secs      = WAIT_TIME_S;
-    wait_time.nano_secs = WAIT_TIME_NS;
-    
-    for (i = 0; i < MAX_TIMEOUTS && !acked; i++) {
-      val = bmac_tx_pkt((uint8_t*)&tx_buf, PACKET_LEN);
-      if (val != NRK_OK) {
-	DBG_KPRINTF("can't send packet\r\n");
-      }
-      
-      val = nrk_wait(wait_time);
-      if (val != NRK_OK) {
-	DBG_KPRINTF("Wait failed?!\r\n");
-	continue;
-      }
-      
-      while (bmac_rx_pkt_ready()) {
-	local_buf = (packet_t*)bmac_rx_pkt_get (&len, &rssi);
-
-	if (len != PACKET_LEN) {
-	  DBG_KPRINTF("length mismatch, who sent this packet?!\r\n");
-	  bmac_rx_pkt_release ();
-	  continue;
-	}
-	
-	if (local_buf->sender != MASTER_ID) {
-	  DBG_KPRINTF("Dropping slave packet\r\n");
-	  bmac_rx_pkt_release ();
-	  continue;
-	}
-	
-	if (local_buf->receiver != MAC_ADDR) {
-	  DBG_KPRINTF("Dropping, not intended recipient\r\n");
-	  bmac_rx_pkt_release ();
-	  continue;
-	}
-	
-	if (local_buf->round < last_round) {
-	  DBG_KPRINTF("Dropping stale packet\r\n");
-	  bmac_rx_pkt_release ();
-	  continue;
-	}
-
-	if (local_buf->msg_type != packet_type_ack) {
-	  DBG_PRINTF("Master did not ack: %d\r\n", local_buf->msg_type);
-	  bmac_rx_pkt_release ();
-	  continue;
-	}
-	
-	DBG_KPRINTF("ACK RECEIVED\r\n");
-
-	acked = 1;
-	break;
-      }
-    } 
-  }
-}
-#endif
 
 void nrk_create_taskset ()
 {
-  // TODO change naming and values
+  RECEIVE_TASK.task = receive_task;
+  nrk_task_set_stk(&RECEIVE_TASK, receive_task_stack, NRK_APP_STACKSIZE);
+  RECEIVE_TASK.prio = 1;
+  RECEIVE_TASK.FirstActivation = TRUE;
+  RECEIVE_TASK.Type = BASIC_TASK;
+  RECEIVE_TASK.SchType = PREEMPTIVE;
+  RECEIVE_TASK.period.secs = 5;
+  RECEIVE_TASK.period.nano_secs = 0;
+  RECEIVE_TASK.cpu_reserve.secs = 3;
+  RECEIVE_TASK.cpu_reserve.nano_secs = 0;
+  RECEIVE_TASK.offset.secs = 0;
+  RECEIVE_TASK.offset.nano_secs = 0;
 
-  SEND_SENSOR_TASK.task = send_sensor_task;
-  nrk_task_set_stk( &WHACKY_TASK, whacky_task_stack, NRK_APP_STACKSIZE);
-  WHACKY_TASK.prio = 2;
-  WHACKY_TASK.FirstActivation = TRUE;
-  WHACKY_TASK.Type = BASIC_TASK;
-  WHACKY_TASK.SchType = PREEMPTIVE;
-  WHACKY_TASK.period.secs = 10;
-  WHACKY_TASK.period.nano_secs = 0;
-  WHACKY_TASK.cpu_reserve.secs = 5;
-  WHACKY_TASK.cpu_reserve.nano_secs = 0;
-  WHACKY_TASK.offset.secs = 0;
-  WHACKY_TASK.offset.nano_secs = 0;
-
-
-  WHACKY_TASK.task = whacky_task;
-  nrk_task_set_stk( &WHACKY_TASK, whacky_task_stack, NRK_APP_STACKSIZE);
-  WHACKY_TASK.prio = 2;
-  WHACKY_TASK.FirstActivation = TRUE;
-  WHACKY_TASK.Type = BASIC_TASK;
-  WHACKY_TASK.SchType = PREEMPTIVE;
-  WHACKY_TASK.period.secs = 10;
-  WHACKY_TASK.period.nano_secs = 0;
-  WHACKY_TASK.cpu_reserve.secs = 5;
-  WHACKY_TASK.cpu_reserve.nano_secs = 0;
-  WHACKY_TASK.offset.secs = 0;
-  WHACKY_TASK.offset.nano_secs = 0;
-
-  WHACKY_TASK.task = whacky_task;
-  nrk_task_set_stk( &WHACKY_TASK, whacky_task_stack, NRK_APP_STACKSIZE);
-  WHACKY_TASK.prio = 2;
-  WHACKY_TASK.FirstActivation = TRUE;
-  WHACKY_TASK.Type = BASIC_TASK;
-  WHACKY_TASK.SchType = PREEMPTIVE;
-  WHACKY_TASK.period.secs = 10;
-  WHACKY_TASK.period.nano_secs = 0;
-  WHACKY_TASK.cpu_reserve.secs = 5;
-  WHACKY_TASK.cpu_reserve.nano_secs = 0;
-  WHACKY_TASK.offset.secs = 0;
-  WHACKY_TASK.offset.nano_secs = 0;
-
-  nrk_activate_task (&WHACKY_TASK);
+  nrk_activate_task(&RECEIVE_TASK);
 
   printf ("Create done\r\n");
 }
