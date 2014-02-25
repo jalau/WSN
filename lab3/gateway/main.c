@@ -25,6 +25,7 @@
 #include <include.h>
 #include <ulib.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <avr/sleep.h>
 #include <hal.h>
 #include <bmac.h>
@@ -42,10 +43,9 @@
 #undef  NRK_APP_STACKSIZE
 #define NRK_APP_STACKSIZE 512
 #define NODE_ID    0x0000
-#define GATE_ID    0x0000
 #define LAST_NODE		2
 void nrk_create_taskset ();
-void nrk_register_drivers();
+//void nrk_register_drivers();
 
 nrk_task_type RECEIVE_TASK;
 
@@ -60,8 +60,9 @@ union {
 
 uint16_t adj_matrix[NUM_NODES][NUM_NODES] = {0};
 uint16_t sensor_packet_number[NUM_NODES] = {0};
+uint16_t config_packet_number[NUM_NODES] = {0};
 uint16_t network_packet_number[NUM_NODES] = {0};
-uint8_t neightbor_list[NUM_NODES] = {0};
+uint8_t neighbor_list[NUM_NODES] = {0};
 nrk_time_t sensor_period, network_period;
 
 int main ()
@@ -80,7 +81,7 @@ int main ()
 
   bmac_task_config ();
 
-  nrk_register_drivers();
+  //nrk_register_drivers();
   nrk_create_taskset ();
   //create semaphore
   my_sem = nrk_sem_create(1,4);
@@ -112,6 +113,7 @@ int main ()
 void find_neighbors(void)
 {
 	uint8_t max_rssi = 0;
+	uint8_t next_neighbor = 0;
 	//look for first node closest to gateway
 	for(int x = 1; x < NUM_NODES; x++)
 	{
@@ -173,11 +175,11 @@ void receive_task(void)
   config_period.secs = 5;
 
   //Initialize config packet to be sent
-  config->packet.pkt_type = packet_type_config;
-  config->packet.sender = GATE_ID;
+  config->pkt_type = packet_type_config;
+  config->sender = GATE_ID;
   //We make sure to send to the last node in the network
   //Also known as the farthest node from the gateway.
-  config->packet.receiver = neighbor_list[LAST_NODE];
+  config->receiver = neighbor_list[LAST_NODE];
   config->packet.config_packet.pkt_num = 1;
   config->packet.config_packet.period = config_period;
 
@@ -185,7 +187,8 @@ void receive_task(void)
   bmac_init(17);
   bmac_rx_pkt_set_buffer((uint8_t *)rx_buf.buffer, sizeof(rx_buf));
   
-  nrk_kprintf(PSTR("Press 'r' to refresh information, press 's' to set sensor period, and press 'n' to set network period.\r\n" ));
+  nrk_kprintf(PSTR("Press 'r' to refresh information, press 's' to set sensor period," ));
+  nrk_kprintf(PSTR("and press 'n' to set network period.\r\n" ));
   
   while(1){
   	packet_t *local;
@@ -205,13 +208,13 @@ void receive_task(void)
 			  // update rssi no matter what
 				// using semaphore
 				rval = nrk_sem_pend(my_sem);
-				if (rval== NRK_ERROR) nrk_kprintf(PSR("Error pending\r\n"));
+				if (rval== NRK_ERROR) nrk_kprintf(PSTR("Error pending\r\n"));
 				adj_matrix[NODE_ID][local->forwarder] = rssi; 
 				rval = nrk_sem_post(my_sem);
-				if (rval== NRK_ERROR) nrk_kprintf(PSR("Error posting\r\n"));
+				if (rval== NRK_ERROR) nrk_kprintf(PSTR("Error posting\r\n"));
 			  // print for gateway only
 			  if (NODE_ID == GATE_ID && local->receiver == NODE_ID){
-				printf("Get Reading %d from node %d\r\n", local->packet.sensor_packet.reading, local->sender);
+				printf("Got Reading %d from node %d\r\n", local->packet.sensor_packet.reading, local->sender);
 			  }
 			  
 			  else{route=1;}
@@ -227,10 +230,10 @@ void receive_task(void)
 			  // update rssi no matter what
 				// using semaphore
 				rval = nrk_sem_pend(my_sem);
-				if (rval== NRK_ERROR) nrk_kprintf(PSR("Error pending\r\n"));
+				if (rval== NRK_ERROR) nrk_kprintf(PSTR("Error pending\r\n"));
 				adj_matrix[NODE_ID][local->forwarder] = rssi; 
 				rval = nrk_sem_post(my_sem);
-				if (rval== NRK_ERROR) nrk_kprintf(PSR("Error posting\r\n"));
+				if (rval== NRK_ERROR) nrk_kprintf(PSTR("Error posting\r\n"));
 			  // check receiver
 			  if (local->receiver == NODE_ID){
 				// always store the info for now, in fact only gateway needs this
@@ -254,18 +257,18 @@ void receive_task(void)
 				if(local->packet.config_packet.cfg_type==config_type_sensor){
 				// using semaphore
 					rval = nrk_sem_pend(my_sem);
-					if (rval== NRK_ERROR) nrk_kprintf(PSR("Error pending\r\n"));
+					if (rval== NRK_ERROR) nrk_kprintf(PSTR("Error pending\r\n"));
 					sensor_period = local->packet.config_packet.period;
 					rval = nrk_sem_post(my_sem);
-					if (rval== NRK_ERROR) nrk_kprintf(PSR("Error posting\r\n"));
+					if (rval== NRK_ERROR) nrk_kprintf(PSTR("Error posting\r\n"));
 				}
 				else if(local->packet.config_packet.cfg_type==config_type_network){
 				// using semaphore
 					rval = nrk_sem_pend(my_sem);
-					if (rval== NRK_ERROR) nrk_kprintf(PSR("Error pending\r\n"));
+					if (rval== NRK_ERROR) nrk_kprintf(PSTR("Error pending\r\n"));
 					network_period = local->packet.config_packet.period;
 					rval = nrk_sem_post(my_sem);
-					if (rval== NRK_ERROR) nrk_kprintf(PSR("Error posting\r\n"));
+					if (rval== NRK_ERROR) nrk_kprintf(PSTR("Error posting\r\n"));
 				}
 				else{
 					printf("Error: unidentified cfg_type %d\r\n", local->packet.config_packet.cfg_type);
@@ -288,8 +291,16 @@ void receive_task(void)
 		else{
 			nrk_kprintf(PSTR("Packet Transfered Failed.\r\n"));}
 	  }
-	  //Check Keyboard for inputs
-	  
+	  read_commands();
+	}
+	read_commands();
+  }
+}
+
+void read_commands()
+{
+//Check Keyboard for inputs
+	  char	option;
 	  if(nrk_uart_data_ready(NRK_DEFAULT_UART))
 		option=getchar();
 		int input_val;
@@ -298,57 +309,65 @@ void receive_task(void)
 		case 's': nrk_kprintf(PSTR("Please input number (in seconds) and press enter.\r\n" ));
 			config->packet.config_packet.cfg_type = config_type_sensor;
 			do{
-			if(nrk_uart_data_ready(NRK_DEFAULT_UART))
-			  option = getchar();
-			  input_val *= 10;
-			  input_val += atoi(option);
+			if(nrk_uart_data_ready(NRK_DEFAULT_UART)){
+				option = getchar();
+				if (option >= '0' && option <= '9') {
+					input_val *= 10;
+					input_val += option - '0';
+				}
+				else break;
+			  }
 			else nrk_event_wait(SIG(uart_rx_signal));
 			  } while(option!='\n');
 			  
 			if(input_val > 0 && input_val < 30){
 			  config_period.secs = input_val;
-  		      config.packet.config_packet.period = config_period;
+  		      config->packet.config_packet.period = config_period;
 			}
 		    break;
 		case 'n': nrk_kprintf(PSTR("Please input number (in seconds) and press enter.\r\n" ));
 			local->packet.config_packet.cfg_type = config_type_network;
 			do{
-			if(nrk_uart_data_ready(NRK_DEFAULT_UART))
-			  input_val *= 10;
-			  input_val += atoi(getchar());
+			if(nrk_uart_data_ready(NRK_DEFAULT_UART)){
+				option = getchar();
+				if (option >= '0' && option <= '9') {
+					input_val *= 10;
+					input_val += option - '0';
+				}
+				else break;
+			  }
 			else nrk_event_wait(SIG(uart_rx_signal));
 			  } while(option!='\n');
 			  
 			if(input_val > 0 && input_val < 30){
 			  config_period.secs = input_val;
-			  config.packet.config_packet.period = config_period;
+			  config->packet.config_packet.period = config_period;
 			  }
 			break;
 		case'r': nrk_kprintf(PSTR("Most recent network structure (lower numbers mean node is farther away from the gateway):\r\n" ));
 			find_neighbors();
 			for(int x = 0; x < NUM_NODES; x++){
-			nrk_kprintf("%d. Node %d \r\n", x, neighbor_list[x]);
+			printf("%d. Node %d \r\n", x, neighbor_list[x]);
 			}
+			break;
+		case' ': 
 			break;
 		default: nrk_kprintf(PSTR("Command not reconized!\r\n" ));
 			break;
 	  }
-	  
-	}
-  }
 }
 
 void nrk_create_taskset ()
 {
   RECEIVE_TASK.task = receive_task;
-  nrk_task_set_stk(&RECEIVE_TASK, receive_task_stack, NRK_APP_STACKSIZE);
+  nrk_task_set_stk(&RECEIVE_TASK, receive_stack, NRK_APP_STACKSIZE);
   RECEIVE_TASK.prio = 1;
   RECEIVE_TASK.FirstActivation = TRUE;
   RECEIVE_TASK.Type = BASIC_TASK;
   RECEIVE_TASK.SchType = PREEMPTIVE;
   RECEIVE_TASK.period.secs = 5;
   RECEIVE_TASK.period.nano_secs = 0;
-  RECEIVE_TASK.cpu_reserve.secs = 3;
+  RECEIVE_TASK.cpu_reserve.secs = 0;
   RECEIVE_TASK.cpu_reserve.nano_secs = 0;
   RECEIVE_TASK.offset.secs = 0;
   RECEIVE_TASK.offset.nano_secs = 0;
@@ -357,6 +376,7 @@ void nrk_create_taskset ()
 
   printf ("Create done\r\n");
 }
+/*
 void nrk_register_drivers()
 {
   int8_t val;
@@ -371,4 +391,4 @@ void nrk_register_drivers()
   val=nrk_register_driver( &dev_manager_ff3_sensors,FIREFLY_SENSOR_BASIC);
   if(val==NRK_ERROR) nrk_kprintf( PSTR("Failed to load my ADC driver\r\n") );
 
-}
+}*/
