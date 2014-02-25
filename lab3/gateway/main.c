@@ -47,6 +47,7 @@
 void nrk_create_taskset ();
 //void nrk_register_drivers();
 
+
 nrk_task_type RECEIVE_TASK;
 
 NRK_STK receive_stack[NRK_APP_STACKSIZE];
@@ -169,11 +170,10 @@ void receive_task(void)
   char	option;
   //packet to hold configuration message to be sent
   packet_t *config;
-  //time variable to set configuration periods
+//time variable to set configuration periods
   nrk_time_t config_period;
   config_period.nano_secs = 0;
   config_period.secs = 5;
-
   //Initialize config packet to be sent
   config->pkt_type = packet_type_config;
   config->sender = GATE_ID;
@@ -204,6 +204,7 @@ void receive_task(void)
 			  if (local->packet.sensor_packet.pkt_num <= sensor_packet_number[local->sender]){
 				bmac_rx_pkt_release ();
 				continue;}
+				DBG_PRINTF("Got Packet number %d", local->packet.sensor_packet.pkt_num);
 			  sensor_packet_number[local->sender] = local->packet.sensor_packet.pkt_num;
 			  // update rssi no matter what
 				// using semaphore
@@ -214,7 +215,7 @@ void receive_task(void)
 				if (rval== NRK_ERROR) nrk_kprintf(PSTR("Error posting\r\n"));
 			  // print for gateway only
 			  if (NODE_ID == GATE_ID && local->receiver == NODE_ID){
-				printf("Got Reading %d from node %d\r\n", local->packet.sensor_packet.reading, local->sender);
+				DBG_PRINTF("Got Reading %d from node %d and packet size %d and length %d\r\n", local->packet.sensor_packet.reading, local->sender, sizeof(local->packet.sensor_packet.reading), len);
 			  }
 			  
 			  else{route=1;}
@@ -291,19 +292,24 @@ void receive_task(void)
 		else{
 			nrk_kprintf(PSTR("Packet Transfered Failed.\r\n"));}
 	  }
-	  read_commands();
+	  read_commands(local, config);
 	}
-	read_commands();
+	read_commands(local, config);
   }
 }
 
-void read_commands()
+inline void read_commands(packet_t* local, packet_t* config)
 {
 //Check Keyboard for inputs
 	  char	option;
-	  if(nrk_uart_data_ready(NRK_DEFAULT_UART))
+	  nrk_sig_t uart_rx_signal;
+	  //time variable to set configuration periods
+  nrk_time_t config_period;
+  config_period.nano_secs = 0;
+  config_period.secs = 5;
+  		int input_val;
+	  if(nrk_uart_data_ready(NRK_DEFAULT_UART)){
 		option=getchar();
-		int input_val;
 		
 	  switch(option){
 		case 's': nrk_kprintf(PSTR("Please input number (in seconds) and press enter.\r\n" ));
@@ -354,6 +360,7 @@ void read_commands()
 			break;
 		default: nrk_kprintf(PSTR("Command not reconized!\r\n" ));
 			break;
+	  }
 	  }
 }
 

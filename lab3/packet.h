@@ -38,6 +38,10 @@ typedef struct {
   uint8_t     sender;
   uint8_t     forwarder;
   uint8_t     receiver;
+} header_t;
+
+typedef struct {
+  header_t header;
   union {
     sensor_packet_t  sensor_packet;
     network_packet_t network_packet;
@@ -46,11 +50,11 @@ typedef struct {
 } packet_t;
 
 #define SENSOR_PKT_LEN							\
-  (sizeof(sensor_packet_t) + sizeof(packet_type) + 2*sizeof(uint8_t))
+  (sizeof(sensor_packet_t) + sizeof(header_t))
 #define NETWORK_PKT_LEN							\
-  (sizeof(network_packet_t) + sizeof(packet_type) + 2*sizeof(uint8_t))
+  (sizeof(network_packet_t) + sizeof(header_t))
 #define CONFIG_PKT_LEN							\
-  (sizeof(config_packet_t) + sizeof(packet_type) + 2*sizeof(uint8_t))
+  (sizeof(config_packet_t) + sizeof(header_t))
 
 
 #endif // __PACKET_H__
